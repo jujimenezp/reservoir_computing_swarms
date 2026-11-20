@@ -9,6 +9,7 @@ r_p = 2. # Predator radius
 s = 10. # Speed reference for friction force
 dt = 0.02
 tf = 50
+trail_len = 5
 
 N = 200 # Number of boids
 
@@ -19,7 +20,7 @@ K_r = 2.
 K_a = 0.01
 K_h = 2.
 K_f = 20.
-K_p = 0.
+K_p = 100.
 
 # Force limitations parameters
 alpha = 200
@@ -64,7 +65,7 @@ def update_forces(x,v):
         # Predator
         distance_predator = np.linalg.norm(x[:,i] - x_p[:2])
         if distance_predator < r_p and distance_predator > 1e-12:
-            F[:,i] += K_p * x[:,i] - x_p[:2] / (distance_predator**2)
+            F[:,i] += K_p * (x[:,i] - x_p[:2]) / (distance_predator**2)
     return alpha * np.tanh(B*F)
 
 # ----------------------
@@ -90,13 +91,11 @@ print("Rescaling Lorenz system trajectory")
 
 x_p_traj = [x_p[:,0]]
 for t in np.arange(0,tf,dt):
-    #x_p_traj.append(lorenz_system_step(x_p_traj[-1],dt))
-    x_p_traj.append(np.zeros(3))
+    x_p_traj.append(lorenz_system_step(x_p_traj[-1],dt))
 
 x_p_traj = np.array(x_p_traj)
 x_p_traj = 2* (x_p_traj-np.average(x_p_traj, axis=0)) / np.std(x_p_traj,axis=0)
 x_p = x_p_traj[0]
-print(x_p)
 
 adj_mat_alignment = adj_matrix(x,r_a)
 adj_mat_repulsion = adj_matrix(x,r_r)
@@ -105,12 +104,14 @@ F = update_forces(x,v)
 # ===============
 # Visualization
 # ===============
+trails = np.zeros((trail_len,N,2))
+trails[0] = x.T
 fig, ax = plt.subplots(1,1,layout='tight')
 ax.set_xlim(-10,10)
 ax.set_ylim(-10,10)
 boids_plot = ax.scatter(x[0,:], x[1,:], color = 'black', zorder = 1, s=10)
-#predator_plot = ax.scatter(x_p[0],x_p[1], color='red', zorder=2, s=10)
-#ax.text()
+predator_plot = ax.scatter(x_p[0],x_p[1], color='red', zorder=2, s=10)
+t_plot = ax.text(0.88,0.94,f't={0}', transform=ax.transAxes, fontsize = 10, bbox = dict(boxstyle="round", facecolor="white"))
 #plt.ion()
 
 # GIF
@@ -121,7 +122,7 @@ writer = FFMpegWriter(fps=15)
 # ==============
 i=0
 print("Main loop starting")
-with writer.saving(fig, "results/swarm_nopredator.gif", dpi=150):
+with writer.saving(fig, "results/swarm.mp4", dpi=150):
     for t in np.arange(0,tf,dt):
         # Update predator position
         x_p = x_p_traj[i]
@@ -137,8 +138,9 @@ with writer.saving(fig, "results/swarm_nopredator.gif", dpi=150):
         x += dt*v
 
         # Update plot
-        boids_plot.set_offsets(x.transpose())
-        #predator_plot.set_offsets(x_p[:2])
+        t_plot.set_text(f't={t:.0f}')
+        boids_plot.set_offsets(x.T)
+        predator_plot.set_offsets(x_p[:2])
         fig.canvas.draw_idle()
         fig.canvas.flush_events()
         plt.pause(0.02)
