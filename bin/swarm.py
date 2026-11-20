@@ -1,34 +1,34 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import FFMpegWriter
 
 # Parameters
 r_r = 1. # Repulsion radius
 r_a = 1. # Alignment radius
 r_p = 2. # Predator radius
-eps = 0.001 # Value to avoid division by zero
 s = 10. # Speed reference for friction force
 dt = 0.02
+tf = 50
 
 N = 200 # Number of boids
-x = np.zeros((2,N)) # Positions
-v = np.zeros((2,N)) # Velocities
 
-x_h = np.array([[0],[0]]) # Homing position
-x_p = np.array([[0],[0]]) # Predator position
+x_h = np.zeros((2,1)) # Homing position
 
 # Forces Weights
-K_r = 1.
-K_a = 0.1
+K_r = 2.
+K_a = 0.01
 K_h = 2.
 K_f = 20.
-K_p = 100.
+K_p = 0.
 
-# ===============
-# Initialization
-# ===============
-rng = np.random.default_rng(seed=123)
-x = rng.standard_normal((2,N)) * 10. + 5.
-v = rng.random((2,N)) * 2. - 1.
+# Force limitations parameters
+alpha = 200
+B = 0.1
+
+# Lorenz system parameters
+sigma = 10.
+rho = 28.
+beta = 8./3.
 
 # Adjacency matrices
 def adj_matrix(x,R):
@@ -39,6 +39,7 @@ def adj_matrix(x,R):
                 adjacency_mat[i,j] = 1
                 adjacency_mat[j,i] = 1
     return adjacency_mat
+x = np.zeros((2,N))
 adj_mat_alignment = adj_matrix(x,r_a)
 adj_mat_repulsion = adj_matrix(x,r_r)
 
@@ -48,8 +49,8 @@ def update_forces(x,v):
     for i in range(N):
         for j in range(i+1, N):
             # Repulsion
-            if adj_mat_repulsion[i,j] == 1:
-                F[:,i] += K_r * (x[:,i] - x[:,j]) / (np.sum((x[:,i]-x[:,j])**2)+eps**2)
+            if adj_mat_repulsion[i,j] == 1 and np.linalg.norm(x[:,i] - x[:,j]) > 1e-12:
+                F[:,i] += K_r * (x[:,i] - x[:,j]) / (np.sum((x[:,i]-x[:,j])**2))
             # Alignment
             if adj_mat_alignment[i,j] == 1:
                 F[:,i] += K_a * (v[:,j] - v[:,i])
@@ -57,17 +58,94 @@ def update_forces(x,v):
         # Homing
         F[:,i] += K_h * (x_h[:,0] - x[:,i])
         # Friction
-        F[:,i] -= K_f * v[:,i] * (np.linalg.norm(v[:,i]) - s) / s
+        speed = np.linalg.norm(v[:,i])
+        if speed > 1e-12:
+            F[:,i] -= K_f * (v[:,i]/speed) * (np.linalg.norm(v[:,i]) - s) / s
         # Predator
-        if np.linalg.norm(x[:,i] - x_p[:,0]) < r_p:
-            F[:,i] += K_p * (x[:,i] - x_p[:,0]) / (np.sum((x[:,i] - x_p[:,0])**2)+eps**2)
-    return F
+        distance_predator = np.linalg.norm(x[:,i] - x_p[:2])
+        if distance_predator < r_p and distance_predator > 1e-12:
+            F[:,i] += K_p * x[:,i] - x_p[:2] / (distance_predator**2)
+    return alpha * np.tanh(B*F)
 
-            
+# ----------------------
+# Predator trajectory
+# ----------------------
+def lorenz_system_step(x_p,dt):
+    x,y,z = x_p
+    x_new = x_p[0] + dt * (sigma*(y-x))
+    y_new = x_p[1] +  dt * (x*(rho - z) - y)
+    z_new = x_p[2] + dt * (x*y - beta*z)
+    return [x_new, y_new,z_new]
+
+# ===============
+# Initialization
+# ===============
+rng = np.random.default_rng(seed=123)
+
+x = rng.random((2,N))*10 - 5
+v = np.zeros((2,N))
+x_p = np.array([8,8,27]).reshape(3,1)
+
+print("Rescaling Lorenz system trajectory")
+
+x_p_traj = [x_p[:,0]]
+for t in np.arange(0,tf,dt):
+    #x_p_traj.append(lorenz_system_step(x_p_traj[-1],dt))
+    x_p_traj.append(np.zeros(3))
+
+x_p_traj = np.array(x_p_traj)
+x_p_traj = 2* (x_p_traj-np.average(x_p_traj, axis=0)) / np.std(x_p_traj,axis=0)
+x_p = x_p_traj[0]
+print(x_p)
+
+adj_mat_alignment = adj_matrix(x,r_a)
+adj_mat_repulsion = adj_matrix(x,r_r)
+F = update_forces(x,v)
 
 # ===============
 # Visualization
 # ===============
 fig, ax = plt.subplots(1,1,layout='tight')
-ax.scatter(x[0,:], x[1,:])
-plt.show()
+ax.set_xlim(-10,10)
+ax.set_ylim(-10,10)
+boids_plot = ax.scatter(x[0,:], x[1,:], color = 'black', zorder = 1, s=10)
+#predator_plot = ax.scatter(x_p[0],x_p[1], color='red', zorder=2, s=10)
+#ax.text()
+#plt.ion()
+
+# GIF
+writer = FFMpegWriter(fps=15)
+
+# ==============
+# Main loop
+# ==============
+i=0
+print("Main loop starting")
+with writer.saving(fig, "results/swarm_nopredator.gif", dpi=150):
+    for t in np.arange(0,tf,dt):
+        # Update predator position
+        x_p = x_p_traj[i]
+        i += 1
+
+        # Update forces
+        adj_mat_alignment = adj_matrix(x,r_a)
+        adj_mat_repulsion = adj_matrix(x,r_r)
+        F = update_forces(x,v)
+
+        # Update boids positions and velocities
+        v += dt*F
+        x += dt*v
+
+        # Update plot
+        boids_plot.set_offsets(x.transpose())
+        #predator_plot.set_offsets(x_p[:2])
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+        plt.pause(0.02)
+
+        #GIF
+        writer.grab_frame()
+
+
+print("Loop completed :D")
+plt.close(fig)
